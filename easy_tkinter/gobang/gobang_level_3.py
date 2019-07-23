@@ -7,6 +7,8 @@
 6. 增加后台的信息反馈
 7. 增加控制面板
 8. 棋盘增加判断棋局是否已经开始的方法
+9. 棋盘增加下棋记录和悔棋的方法
+10. 重构控制面板的按钮设置方法
 """
 
 from tkinter import (
@@ -15,9 +17,9 @@ from tkinter import (
     Frame,
     Button,
     Label,
-    StringVar,
-    DISABLED
+    StringVar
 )
+from pathlib import Path
 
 class ChessBoard(Canvas):
     def __init__(self, root):
@@ -27,6 +29,8 @@ class ChessBoard(Canvas):
         self.line_count = 15
         # 棋盘网格边长
         self.mesh_side_len = int(self.side_len / (self.line_count + 1))
+        # # 初始化落子记录
+        # self.records = Records()
         # 初始设置
         self.setup()
         # 事件绑定
@@ -43,10 +47,12 @@ class ChessBoard(Canvas):
     def setup(self):
         # 清空画布
         self.delete('all')
+        # 清空记录
+        self.records = Records()
         self.config(
             width=self.side_len, 
             height=self.side_len,
-            background='#CDBA96'
+            background='burlywood'
         )
         self.draw_mesh()
         # 游戏开始第一回合为黑方回合
@@ -111,6 +117,8 @@ class ChessBoard(Canvas):
         if len(shapes) != 0:
             print('列%s行%s处的棋子已存在！' % (column, row))
             return None
+        # 添加落子记录
+        self.records.append(column, row, color)
         return self.create_oval(
             x - r,
             y - r,
@@ -144,14 +152,45 @@ class ChessBoard(Canvas):
         elif decimal_part > 0.7:
             return integer_part + 1
         return None
-        
+    
+    def undo(self):
+        """
+        悔棋功能，即删除最后一条记录的同时删除记录标签对应的棋子
+        """
+        tags = self.records.pop()
+        if tags:
+            self.delete('(%s,%s)' % tags[:-1])
+    
+    def save(self):
+        """
+        保存落子记录
+        """
+        if len(self.records.steps) > 0:
+            self.records.save()
+            print('保存落子记录...')
+        else:
+            print('棋盘无棋子')
+    
+    def resuming(self):
+        """
+        复盘
+        """
+        steps = self.records.read()
+        for step in steps:
+            self.draw_pieces_by_cr(*step)
+        # 判断复盘后棋局的先手方
+        if step[2] == 'black':
+            self.black_round = False
+        else:
+            self.black_round = True
+
+       
 class ShowCoordsMixIn:
     def show(self, event):
         print(event.x, event.y)
     
     def init_mixin(self):
         self.bind('<Button-1>', self.show)
-
 
 
 class ControlPanel(Frame, ShowCoordsMixIn):
@@ -169,34 +208,79 @@ class ControlPanel(Frame, ShowCoordsMixIn):
         self.config(
             width=480,
             height=120,
-            background='#CDC0B0'
+            background='burlywood'
         )
         self.set_widget()
     
     def set_widget(self):
-        self.b_restart = Button(
-            self, 
-            text='重新开始', 
-            bg='#CDBA96', 
-            state=DISABLED, 
-            command=self.aco.setup
-        )
-        self.b_restart.place(x=200, y=5, width=80, height=30)
-        self.label_status = Label(
+        # 重新开始按钮
+        self.b_restart = self.new_button('重新开始', self.aco.setup, 200, 5)
+        # 悔棋按钮
+        self.b_undo = self.new_button('悔棋', self.aco.undo, 10, 10)
+        # 保存记录按钮
+        self.b_save = self.new_button('保存', self.aco.save, 400, 10)
+        # 复盘记录按钮
+        self.b_resuming = self.new_button('复盘', self.aco.resuming, 400, 50)
+        # 回合状态标签
+        self.l_status = Label(
             self, 
             textvariable=self.str_round,
             font=self.font_1,
             background='#CDC0B0'
         )
-        self.label_status.place(x=180, y=50, width=130, height=30)
-        
+        self.l_status.place(x=180, y=50, width=130, height=30)
+    
+    def new_button(self, text, command, x, y):
+        button = Button(
+            self,
+            text=text,
+            background='#CDC0B0',
+            command=command
+        )
+        button.place(x=x, y=y)
+        return button
+
+
+class Records:
+    def __init__(self):
+        self.steps = []
+        self.work_dir = Path(__file__).parent
+        self.file = self.work_dir / 'records.txt'
+    
+    def append(self, column, row, color):
+        self.steps.append((column, row, color))
+
+    def pop(self):
+        if len(self.steps) > 0:
+            return self.steps.pop()
+        return None
+
+    def save(self):
+        print(self.steps)
+        with open(self.file, 'w') as f:
+            for step in self.steps:
+                f.write('%s,%s,%s\n' % step)
+    
+    def read(self):
+        """
+        读取记录，并返回一个记录的列表
+        并不会改变 self.steps，
+        因为所有的记录都是由chess_board的draw_pieces_by_cr功能添加的
+        """
+        steps = []
+        with open(self.file, 'r') as f:
+            lines = f.readlines()
+        for line in lines:
+            t = line[:-1].split(',')
+            t = (int(t[0]), int(t[1]), t[2])
+            steps.append(t)
+        return steps
 
 
 root = Tk()
 root.title('五子棋')
 root.geometry('480x600+100+10')
 root.resizable(False, False)
-
 
 chess_board = ChessBoard(root)
 chess_board.pack()
@@ -213,9 +297,15 @@ def run():
     # 开始按钮状态控制
     if chess_board.is_started:
         control_panel.b_restart.config(state='normal')
+        control_panel.b_resuming.config(state='disabled')
     else:
         control_panel.b_restart.config(state='disabled')
-
+        control_panel.b_resuming.config(state='normal')
+    # 悔棋按钮状态控制
+    if len(chess_board.records.steps) > 0:
+        control_panel.b_undo.config(state='normal')
+    else:
+        control_panel.b_undo.config(state='disabled')
     root.after(100, run)
 
 run()
