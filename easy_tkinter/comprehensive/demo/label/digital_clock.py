@@ -67,12 +67,14 @@ class MainFrame(Frame):
 class App(Tk):
     def __init__(self):
         super().__init__()
-        self.setup()
         self.set_widget()
+        self.setup()
    
     def setup(self):
-        self.title('Digital Clock')
-        self.geometry('350x200+100+100')
+        w = self.frame.cget('width')
+        h = self.frame.cget('height')
+        self.title(self.frame.title)
+        self.geometry('%sx%s+100+100' % (w, h))
     
     def set_widget(self):
         self.frame = MainFrame(self)
